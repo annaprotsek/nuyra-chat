@@ -99,18 +99,27 @@ def delete_chat(chat_id):
 
 
 def add_message(chat_id, role, content):
+    """Повертає збережене повідомлення разом з id — він потрібен фронту для кнопок."""
     with connect() as conn:
-        conn.execute(
+        message_id = conn.execute(
             "INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)",
             (chat_id, role, content),
-        )
+        ).lastrowid
+    return {"id": message_id, "role": role, "content": content}
 
 
 def get_messages(chat_id):
     """Історія одного чату від найстарішого повідомлення до найновішого."""
     with connect() as conn:
         rows = conn.execute(
-            "SELECT role, content FROM messages WHERE chat_id = ? ORDER BY id",
+            "SELECT id, role, content FROM messages WHERE chat_id = ? ORDER BY id",
             (chat_id,),
         ).fetchall()
-    return [{"role": row["role"], "content": row["content"]} for row in rows]
+    return [dict(row) for row in rows]
+
+
+def delete_message(message_id):
+    """Повертає True, якщо повідомлення існувало."""
+    with connect() as conn:
+        cursor = conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+    return cursor.rowcount > 0

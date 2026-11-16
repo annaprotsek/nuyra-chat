@@ -20,6 +20,7 @@
       --accent-to: #b388ff;
       --hover: #f3eefd;
       --active: #e3d9fb;
+      --code-bg: rgba(124, 77, 255, 0.1);
       --error: #d6336c;
     }
     /* темна тема: темно-фіолетовий фон, бузкові акценти */
@@ -37,6 +38,7 @@
         --accent-to: #e0c3ff;
         --hover: #2a2140;
         --active: #3a2e55;
+        --code-bg: rgba(179, 136, 255, 0.15);
         --error: #ff7aa2;
       }
     }
@@ -127,15 +129,39 @@
       max-width: 760px;
       margin: 0 auto;
     }
+    .msg-row { display: flex; flex-direction: column; gap: 2px; max-width: 80%; }
+    .msg-row.user { align-self: flex-end; align-items: flex-end; }
+    .msg-row.assistant { align-self: flex-start; align-items: flex-start; }
     .msg {
-      max-width: 80%;
       padding: 10px 14px;
       border-radius: 16px;
-      white-space: pre-wrap;      /* зберігаємо переноси рядків */
       overflow-wrap: anywhere;    /* довгі слова не ламають розмітку */
     }
-    .user { align-self: flex-end; background: var(--user-bg); color: var(--user-text); border-bottom-right-radius: 4px; }
-    .assistant { align-self: flex-start; background: var(--bot-bg); color: var(--bot-text); border-bottom-left-radius: 4px; }
+    .msg.user {
+      white-space: pre-wrap;      /* зберігаємо переноси рядків */
+      background: var(--user-bg);
+      color: var(--user-text);
+      border-bottom-right-radius: 4px;
+    }
+    .msg.assistant { background: var(--bot-bg); color: var(--bot-text); border-bottom-left-radius: 4px; }
+
+    /* Markdown у відповідях */
+    .msg.assistant > :first-child { margin-top: 0; }
+    .msg.assistant > :last-child { margin-bottom: 0; }
+    .msg.assistant p, .msg.assistant ul, .msg.assistant ol { margin: 0.5em 0; }
+    .msg.assistant ul, .msg.assistant ol { padding-left: 1.4em; }
+    .msg.assistant code { font-family: ui-monospace, Consolas, monospace; font-size: 0.9em; background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+    .msg.assistant pre { background: var(--code-bg); padding: 10px 12px; border-radius: 8px; overflow-x: auto; }
+    .msg.assistant pre code { background: none; padding: 0; }
+    .msg.assistant table { display: block; overflow-x: auto; border-collapse: collapse; }
+    .msg.assistant th, .msg.assistant td { border: 1px solid var(--border); padding: 4px 8px; }
+    .msg.assistant a { color: var(--user-bg); }
+
+    /* кнопки під повідомленням */
+    .actions { display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s; }
+    .msg-row:hover .actions { opacity: 1; }
+    .action { font-size: 15px; line-height: 1; padding: 2px 6px; }
+    .action-delete:hover { color: var(--error); }
     #status { min-height: 1.5em; padding: 0 16px; max-width: 760px; width: 100%; margin: 0 auto; color: var(--muted); font-size: 14px; }
     #status.error { color: var(--error); }
     form {
@@ -182,6 +208,7 @@
       }
       #menu-btn { display: block; }
       .delete-chat { opacity: 1; }  /* на телефоні немає наведення — хрестик видно завжди */
+      .actions { opacity: 1; }      /* і кнопки під повідомленнями теж */
     }
   </style>
 </head>
@@ -208,6 +235,8 @@
     </form>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
   <script>
     const chatListEl = document.getElementById("chat-list");
     const chatTitleEl = document.getElementById("chat-title");
@@ -219,6 +248,8 @@
 
     let chats = [];             // список чатів для панелі: [{id, title}]
     let currentChatId = null;   // який чат відкрито зараз
+    let messages = [];          // повідомлення відкритого чату: [{id, role, content}]
+    let busy = false;           // чекаємо відповідь — нові запити не надсилаємо
 
     // один запит до нашого API; кидає помилку з текстом від сервера
     async function api(method, url, body) {
@@ -233,13 +264,113 @@
       return data;
     }
 
-    // додати одне повідомлення на сторінку
-    function addMessage(role, content) {
-      const div = document.createElement("div");
-      div.className = "msg " + role;
-      div.textContent = content; // textContent, щоб HTML у тексті не виконувався
-      messagesEl.appendChild(div);
+    // посилання з відповідей відкриваємо в новій вкладці, щоб не закрити чат
+    DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+      if (node.tagName === "A") {
+        node.target = "_blank";
+        node.rel = "noopener";
+      }
+    });
+
+    // marked: Markdown → HTML; DOMPurify: вирізаємо з HTML усе небезпечне
+    function renderMarkdown(text) {
+      return DOMPurify.sanitize(marked.parse(text));
+    }
+
+    // перемалювати всі повідомлення відкритого чату
+    function renderMessages() {
+      messagesEl.innerHTML = "";
+      messages.forEach((m, i) => {
+        const row = document.createElement("div");
+        row.className = "msg-row " + m.role;
+
+        const bubble = document.createElement("div");
+        bubble.className = "msg " + m.role;
+        if (m.role === "assistant") bubble.innerHTML = renderMarkdown(m.content);
+        else bubble.textContent = m.content; // твій текст — без Markdown, як є
+        row.appendChild(bubble);
+
+        // у щойно надісланого повідомлення ще немає id — кнопки з'являться після збереження
+        if (m.id !== null) row.appendChild(renderActions(m, i === messages.length - 1));
+        messagesEl.appendChild(row);
+      });
       messagesEl.scrollTop = messagesEl.scrollHeight; // прокрутити донизу
+    }
+
+    function actionButton(label, hint, onClick) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "icon action";
+      btn.textContent = label;
+      btn.title = hint; // підказка при наведенні
+      btn.setAttribute("aria-label", hint);
+      btn.addEventListener("click", onClick);
+      return btn;
+    }
+
+    function renderActions(message, isLast) {
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      if (message.role === "assistant") {
+        actions.appendChild(actionButton("⧉", "Копіювати", (e) => copyMessage(message, e.currentTarget)));
+        if (isLast) actions.appendChild(actionButton("↻", "Перегенерувати", regenerate));
+      }
+      const del = actionButton("×", "Видалити", () => deleteMessage(message));
+      del.classList.add("action-delete");
+      actions.appendChild(del);
+      return actions;
+    }
+
+    async function copyMessage(message, btn) {
+      try {
+        await navigator.clipboard.writeText(message.content);
+      } catch {
+        // з телефону (http://192.168…) браузер не дає доступу до буфера — старий спосіб
+        const temp = document.createElement("textarea");
+        temp.value = message.content;
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand("copy");
+        temp.remove();
+      }
+      btn.textContent = "✓";
+      setTimeout(() => (btn.textContent = "⧉"), 1500);
+    }
+
+    async function deleteMessage(message) {
+      if (busy || !confirm("Видалити це повідомлення?")) return;
+      try {
+        await api("DELETE", `/messages/${message.id}`);
+      } catch (err) {
+        setStatus(err.message, true);
+        return;
+      }
+      messages = messages.filter((m) => m.id !== message.id);
+      renderMessages();
+    }
+
+    async function regenerate() {
+      if (busy) return;
+      const chatId = currentChatId;
+      setBusy(true);
+      setStatus("NUYRA думає ще раз…");
+      try {
+        const newAnswer = await api("POST", `/chats/${chatId}/regenerate`);
+        if (chatId === currentChatId) {
+          messages[messages.length - 1] = newAnswer; // замінюємо останню відповідь
+          renderMessages();
+          setStatus("");
+        }
+      } catch (err) {
+        if (chatId === currentChatId) setStatus(err.message, true);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function setBusy(value) {
+      busy = value;
+      sendBtn.disabled = value;
     }
 
     function setStatus(text, isError = false) {
@@ -277,18 +408,20 @@
     async function selectChat(id) {
       currentChatId = id;
       renderChats();
-      messagesEl.innerHTML = "";
+      messages = [];
+      renderMessages();
       setStatus("");
       document.body.classList.remove("sidebar-open"); // на телефоні ховаємо панель
-      const messages = await api("GET", `/chats/${id}/messages`);
+      const loaded = await api("GET", `/chats/${id}/messages`);
       if (id !== currentChatId) return; // поки вантажили, вже відкрили інший чат
-      messages.forEach((m) => addMessage(m.role, m.content));
+      messages = loaded;
+      renderMessages();
       input.focus();
     }
 
     async function newChat() {
       // поточний чат ще порожній — не створюємо ще один порожній
-      if (currentChatId !== null && messagesEl.children.length === 0) {
+      if (currentChatId !== null && messages.length === 0) {
         document.body.classList.remove("sidebar-open");
         input.focus();
         return;
@@ -320,12 +453,13 @@
     form.addEventListener("submit", async (event) => {
       event.preventDefault(); // не перезавантажувати сторінку
       const text = input.value.trim();
-      if (!text) return;
+      if (!text || busy) return;
       const chatId = currentChatId; // запам'ятовуємо: поки чекаємо, можна перемкнути чат
 
-      addMessage("user", text);
+      messages.push({ id: null, role: "user", content: text }); // id ще немає — без кнопок
+      renderMessages();
       input.value = "";
-      sendBtn.disabled = true;
+      setBusy(true);
       setStatus("NUYRA друкує…");
 
       try {
@@ -334,17 +468,20 @@
         if (chat) chat.title = data.title; // назва могла змінитись після першого повідомлення
         renderChats();
         if (chatId === currentChatId) {
-          addMessage("assistant", data.answer);
+          messages.pop();                  // тимчасове повідомлення без id…
+          messages.push(...data.messages); // …замінюємо збереженими (з id) + відповідь
+          renderMessages();
           setStatus("");
         }
       } catch (err) {
         if (chatId === currentChatId) {
-          messagesEl.lastChild.remove(); // повідомлення не збереглось — прибираємо його
-          input.value = text;            // і повертаємо текст у поле, щоб надіслати ще раз
+          messages.pop();      // повідомлення не збереглось — прибираємо його
+          renderMessages();
+          input.value = text;  // і повертаємо текст у поле, щоб надіслати ще раз
           setStatus(err.message, true);
         }
       } finally {
-        sendBtn.disabled = false;
+        setBusy(false);
         input.focus();
       }
     });

@@ -85,6 +85,13 @@ def run_agent(history):
     return "Вибач, я заплуталась в інструментах. Спробуй перефразувати питання."
 
 
+def build_history(messages):
+    """System prompt + історія чату у форматі Groq (лише role і content, без id)."""
+    return [{"role": "system", "content": SYSTEM_PROMPT}] + [
+        {"role": m["role"], "content": m["content"]} for m in messages
+    ]
+
+
 @app.get("/")
 def index():
     return FileResponse(INDEX_HTML)  # віддаємо сторінку чату
@@ -121,8 +128,7 @@ def send_message(chat_id: int, req: ChatRequest):
 
     # модель нічого не пам'ятає, тому щоразу надсилаємо всю історію чату
     previous = db.get_messages(chat_id)
-    history = [{"role": "system", "content": SYSTEM_PROMPT}]
-    history += previous
+    history = build_history(previous)
     history.append({"role": "user", "content": text})
 
     try:
@@ -130,8 +136,9 @@ def send_message(chat_id: int, req: ChatRequest):
     except APIError:
         raise HTTPException(status_code=502, detail="Groq не відповів, спробуй ще раз")
 
-    db.add_message(chat_id, "user", text)       # зберігаємо обидва повідомлення
-    db.add_message(chat_id, "assistant", answer)  # лише коли відповідь успішна
+    # зберігаємо обидва повідомлення лише коли відповідь успішна
+    user_message = db.add_message(chat_id, "user", text)
+    assistant_message = db.add_message(chat_id, "assistant", answer)
 
     title = chat["title"]
     if not previous:  # це перше повідомлення в чаті — час придумати назву
@@ -141,4 +148,27 @@ def send_message(chat_id: int, req: ChatRequest):
         except APIError:
             pass  # назва не критична: якщо не вийшло, лишається «Новий чат»
 
-    return {"answer": answer, "title": title}
+    return {"title": title, "messages": [user_message, assistant_message]}
+
+
+@app.post("/chats/{chat_id}/regenerate")
+def regenerate(chat_id: int):
+    get_chat_or_404(chat_id)
+    messages = db.get_messages(chat_id)
+    if not messages or messages[-1]["role"] != "assistant":
+        raise HTTPException(status_code=400, detail="Немає відповіді, яку можна перегенерувати")
+
+    old_answer = messages.pop()  # просимо модель відповісти так, ніби старої відповіді не було
+    try:
+        answer = run_agent(build_history(messages))
+    except APIError:
+        raise HTTPException(status_code=502, detail="Groq не відповів, спробуй ще раз")
+
+    db.delete_message(old_answer["id"])  # стару відповідь видаляємо лише після успіху
+    return db.add_message(chat_id, "assistant", answer)
+
+
+@app.delete("/messages/{message_id}", status_code=204)
+def delete_message(message_id: int):
+    if not db.delete_message(message_id):
+        raise HTTPException(status_code=404, detail="Повідомлення не знайдено")

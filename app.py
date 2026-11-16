@@ -7,14 +7,17 @@ from groq import APIError, Groq
 from pydantic import BaseModel
 
 import db
+from tools import TOOLS, run_tool
 
 load_dotenv()  # читаємо GROQ_API_KEY з .env
 
 MODEL = "openai/gpt-oss-120b"
 SYSTEM_PROMPT = (
     "Ти NUYRA — помічник. Відповідай тією мовою, якою пише користувач: "
-    "українською або англійською."
+    "українською або англійською. Для дати й часу, обчислень і погоди "
+    "завжди користуйся інструментами, а не вгадуй."
 )
+MAX_TOOL_STEPS = 5  # скільки разів поспіль модель може викликати інструменти
 TITLE_PROMPT = (
     "You name chats. You get the first user message inside <message> tags. "
     "Do NOT answer it. Reply only with a short chat title (2-5 words) "
@@ -53,6 +56,33 @@ def generate_title(first_message):
     title = (response.choices[0].message.content.strip().splitlines() or [""])[0]
     title = title.strip("\"«»*# ")
     return title[:60] or db.NEW_CHAT_TITLE
+
+
+def run_agent(history):
+    """Цикл агента: модель або відповідає, або просить викликати інструмент.
+    Ми викликаємо його, додаємо результат в історію і питаємо модель знову."""
+    for _ in range(MAX_TOOL_STEPS):
+        message = client.chat.completions.create(
+            model=MODEL, messages=history, tools=TOOLS
+        ).choices[0].message
+        if not message.tool_calls:
+            return message.content  # інструменти не потрібні — це фінальна відповідь
+
+        # запам'ятовуємо, які інструменти модель попросила…
+        history.append({
+            "role": "assistant",
+            "content": message.content,
+            "tool_calls": [call.model_dump() for call in message.tool_calls],
+        })
+        # …і додаємо результат кожного з них
+        for call in message.tool_calls:
+            history.append({
+                "role": "tool",
+                "tool_call_id": call.id,  # щоб модель знала, на який виклик це відповідь
+                "content": run_tool(call.function.name, call.function.arguments),
+            })
+
+    return "Вибач, я заплуталась в інструментах. Спробуй перефразувати питання."
 
 
 @app.get("/")
@@ -96,11 +126,10 @@ def send_message(chat_id: int, req: ChatRequest):
     history.append({"role": "user", "content": text})
 
     try:
-        response = client.chat.completions.create(model=MODEL, messages=history)
+        answer = run_agent(history)
     except APIError:
         raise HTTPException(status_code=502, detail="Groq не відповів, спробуй ще раз")
 
-    answer = response.choices[0].message.content
     db.add_message(chat_id, "user", text)       # зберігаємо обидва повідомлення
     db.add_message(chat_id, "assistant", answer)  # лише коли відповідь успішна
 

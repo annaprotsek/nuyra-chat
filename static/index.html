@@ -18,6 +18,8 @@
       --bot-text: #2e1a47;
       --accent-from: #7c4dff;
       --accent-to: #b388ff;
+      --hover: #f3eefd;
+      --active: #e3d9fb;
       --error: #d6336c;
     }
     /* темна тема: темно-фіолетовий фон, бузкові акценти */
@@ -33,6 +35,8 @@
         --bot-text: #efe8ff;
         --accent-from: #b388ff;
         --accent-to: #e0c3ff;
+        --hover: #2a2140;
+        --active: #3a2e55;
         --error: #ff7aa2;
       }
     }
@@ -41,15 +45,31 @@
       margin: 0;
       height: 100vh;
       display: flex;
-      flex-direction: column;
       background: var(--bg);
       color: var(--text);
       font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
     }
-    header {
+    button { font: inherit; border: 0; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .primary { border-radius: 12px; background: var(--user-bg); color: var(--user-text); }
+    .icon { background: none; color: var(--muted); border-radius: 8px; padding: 6px 8px; }
+    .icon:hover { color: var(--text); }
+
+    /* ---- бічна панель ---- */
+    #sidebar {
+      width: 260px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+    }
+    .sidebar-top {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
       padding: 14px 16px;
       border-bottom: 1px solid var(--border);
-      background: var(--panel);
     }
     .logo {
       font-weight: 800;
@@ -60,6 +80,42 @@
       background-clip: text;
       color: transparent;
     }
+    #new-chat { padding: 10px; }
+    #chat-list { flex: 1; overflow-y: auto; list-style: none; margin: 0; padding: 8px; }
+    .chat-item { display: flex; align-items: center; border-radius: 10px; }
+    .chat-item:hover { background: var(--hover); }
+    .chat-item.active { background: var(--active); }
+    .chat-title {
+      flex: 1;
+      padding: 9px 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;  /* довга назва обрізається трьома крапками */
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .delete-chat {
+      opacity: 0;          /* хрестик видно лише при наведенні */
+      font-size: 20px;
+      line-height: 1;
+      padding: 4px 10px;
+    }
+    .delete-chat:hover { color: var(--error); }  /* при наведенні — малиновий */
+    .chat-item:hover .delete-chat,
+    .chat-item.active .delete-chat { opacity: 1; }
+
+    /* ---- область чату ---- */
+    #main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 53px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+    #menu-btn { display: none; font-size: 20px; }
+    #chat-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #messages {
       flex: 1;
       overflow-y: auto;
@@ -102,33 +158,80 @@
     }
     textarea::placeholder { color: var(--muted); }
     textarea:focus { outline: 2px solid var(--user-bg); outline-offset: -1px; }
-    button {
-      padding: 0 18px;
-      border: 0;
-      border-radius: 12px;
-      background: var(--user-bg);
-      color: var(--user-text);
-      font: inherit;
-      cursor: pointer;
+    #send { padding: 0 18px; }
+
+    /* ---- вузький екран: панель ховається під ☰ ---- */
+    #backdrop { display: none; }
+    @media (max-width: 700px) {
+      #sidebar {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 10;
+        transform: translateX(-100%);  /* панель за лівим краєм екрана */
+        transition: transform 0.2s;
+      }
+      body.sidebar-open #sidebar { transform: none; }
+      body.sidebar-open #backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 5;
+        background: rgba(20, 10, 40, 0.4);  /* затемнення під панеллю */
+      }
+      #menu-btn { display: block; }
+      .delete-chat { opacity: 1; }  /* на телефоні немає наведення — хрестик видно завжди */
     }
-    button:disabled { opacity: 0.5; cursor: default; }
   </style>
 </head>
 <body>
-  <header><span class="logo">NUYRA</span></header>
-  <main id="messages"></main>
-  <div id="status"></div>
-  <form id="form">
-    <textarea id="input" rows="2" placeholder="Напиши повідомлення… (Enter — надіслати, Shift+Enter — новий рядок)"></textarea>
-    <button id="send" type="submit">➤</button>
-  </form>
+  <aside id="sidebar">
+    <div class="sidebar-top">
+      <span class="logo">NUYRA</span>
+      <button id="new-chat" class="primary" type="button">+ Новий чат</button>
+    </div>
+    <ul id="chat-list"></ul>
+  </aside>
+  <div id="backdrop"></div>
+
+  <div id="main">
+    <header>
+      <button id="menu-btn" class="icon" type="button" aria-label="Чати">☰</button>
+      <span id="chat-title"></span>
+    </header>
+    <main id="messages"></main>
+    <div id="status"></div>
+    <form id="form">
+      <textarea id="input" rows="2" placeholder="Напиши повідомлення… (Enter — надіслати, Shift+Enter — новий рядок)"></textarea>
+      <button id="send" class="primary" type="submit">➤</button>
+    </form>
+  </div>
 
   <script>
+    const chatListEl = document.getElementById("chat-list");
+    const chatTitleEl = document.getElementById("chat-title");
     const messagesEl = document.getElementById("messages");
     const statusEl = document.getElementById("status");
     const form = document.getElementById("form");
     const input = document.getElementById("input");
     const sendBtn = document.getElementById("send");
+
+    let chats = [];             // список чатів для панелі: [{id, title}]
+    let currentChatId = null;   // який чат відкрито зараз
+
+    // один запит до нашого API; кидає помилку з текстом від сервера
+    async function api(method, url, body) {
+      const res = await fetch(url, {
+        method,
+        headers: body ? { "Content-Type": "application/json" } : {},
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (res.status === 204) return null; // 204 — успіх без тіла відповіді
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Щось пішло не так");
+      return data;
+    }
 
     // додати одне повідомлення на сторінку
     function addMessage(role, content) {
@@ -144,17 +247,81 @@
       statusEl.className = isError ? "error" : "";
     }
 
-    // при відкритті сторінки показуємо історію з бази
-    async function loadHistory() {
-      const res = await fetch("/messages");
-      const messages = await res.json();
+    // перемалювати список чатів у панелі
+    function renderChats() {
+      chatListEl.innerHTML = "";
+      for (const chat of chats) {
+        const li = document.createElement("li");
+        li.className = "chat-item" + (chat.id === currentChatId ? " active" : "");
+
+        const title = document.createElement("span");
+        title.className = "chat-title";
+        title.textContent = chat.title;
+        title.title = chat.title; // повна назва у підказці при наведенні
+        title.addEventListener("click", () => selectChat(chat.id));
+
+        const del = document.createElement("button");
+        del.className = "icon delete-chat";
+        del.type = "button";
+        del.textContent = "×";
+        del.setAttribute("aria-label", "Видалити чат");
+        del.addEventListener("click", () => deleteChat(chat));
+
+        li.append(title, del);
+        chatListEl.appendChild(li);
+      }
+      const current = chats.find((c) => c.id === currentChatId);
+      chatTitleEl.textContent = current ? current.title : "";
+    }
+
+    async function selectChat(id) {
+      currentChatId = id;
+      renderChats();
+      messagesEl.innerHTML = "";
+      setStatus("");
+      document.body.classList.remove("sidebar-open"); // на телефоні ховаємо панель
+      const messages = await api("GET", `/chats/${id}/messages`);
+      if (id !== currentChatId) return; // поки вантажили, вже відкрили інший чат
       messages.forEach((m) => addMessage(m.role, m.content));
+      input.focus();
+    }
+
+    async function newChat() {
+      // поточний чат ще порожній — не створюємо ще один порожній
+      if (currentChatId !== null && messagesEl.children.length === 0) {
+        document.body.classList.remove("sidebar-open");
+        input.focus();
+        return;
+      }
+      const chat = await api("POST", "/chats");
+      chats.unshift(chat); // новий чат — нагору списку
+      await selectChat(chat.id);
+    }
+
+    async function deleteChat(chat) {
+      if (!confirm(`Видалити чат «${chat.title}»?`)) return;
+      try {
+        await api("DELETE", `/chats/${chat.id}`);
+      } catch (err) {
+        setStatus(err.message, true);
+        return;
+      }
+      chats = chats.filter((c) => c.id !== chat.id);
+      if (chat.id !== currentChatId) {
+        renderChats(); // видалили інший чат — поточний лишається
+      } else if (chats.length > 0) {
+        await selectChat(chats[0].id); // видалили відкритий — відкриваємо найновіший
+      } else {
+        currentChatId = null; // видалили останній — створюємо новий
+        await newChat();
+      }
     }
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault(); // не перезавантажувати сторінку
       const text = input.value.trim();
       if (!text) return;
+      const chatId = currentChatId; // запам'ятовуємо: поки чекаємо, можна перемкнути чат
 
       addMessage("user", text);
       input.value = "";
@@ -162,19 +329,20 @@
       setStatus("NUYRA друкує…");
 
       try {
-        const res = await fetch("/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Щось пішло не так");
-        addMessage("assistant", data.answer);
-        setStatus("");
+        const data = await api("POST", `/chats/${chatId}/messages`, { message: text });
+        const chat = chats.find((c) => c.id === chatId);
+        if (chat) chat.title = data.title; // назва могла змінитись після першого повідомлення
+        renderChats();
+        if (chatId === currentChatId) {
+          addMessage("assistant", data.answer);
+          setStatus("");
+        }
       } catch (err) {
-        messagesEl.lastChild.remove(); // повідомлення не збереглось — прибираємо його
-        input.value = text;            // і повертаємо текст у поле, щоб надіслати ще раз
-        setStatus(err.message, true);
+        if (chatId === currentChatId) {
+          messagesEl.lastChild.remove(); // повідомлення не збереглось — прибираємо його
+          input.value = text;            // і повертаємо текст у поле, щоб надіслати ще раз
+          setStatus(err.message, true);
+        }
       } finally {
         sendBtn.disabled = false;
         input.focus();
@@ -189,7 +357,21 @@
       }
     });
 
-    loadHistory();
+    document.getElementById("new-chat").addEventListener("click", newChat);
+    document.getElementById("menu-btn").addEventListener("click", () => {
+      document.body.classList.toggle("sidebar-open");
+    });
+    document.getElementById("backdrop").addEventListener("click", () => {
+      document.body.classList.remove("sidebar-open"); // клік поза панеллю — закрити
+    });
+
+    // при відкритті сторінки: завантажуємо чати й відкриваємо найновіший
+    async function init() {
+      chats = await api("GET", "/chats");
+      if (chats.length > 0) await selectChat(chats[0].id);
+      else await newChat();
+    }
+    init();
   </script>
 </body>
 </html>
